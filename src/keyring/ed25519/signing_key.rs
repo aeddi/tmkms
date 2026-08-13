@@ -32,6 +32,15 @@ impl SigningKey {
 
 impl Signer<Signature> for SigningKey {
     fn try_sign(&self, msg: &[u8]) -> signature::Result<Signature> {
+        // `hazmat::raw_sign` is used because this type must support pre-expanded
+        // keys that no seed exists for (YubiHSM exports, 64-byte keys), which the
+        // safe API cannot represent.
+        //
+        // The hazard it carries is the ed25519 "public key oracle" attack: signing
+        // with a verifying key that does not match the secret leaks the private
+        // key. That is avoided by deriving the verifying key from `expanded` on
+        // every call rather than storing one alongside it, so the two cannot
+        // disagree. See https://github.com/MystenLabs/ed25519-unsafe-libs
         let signature =
             ed25519_dalek::hazmat::raw_sign::<Sha512>(&self.expanded, msg, &self.verifying_key().0);
         Ok(signature.to_bytes().into())
@@ -47,9 +56,13 @@ impl TryFrom<&[u8]> for SigningKey {
                 let mut seed = Zeroizing::new([0u8; Self::BYTE_SIZE]);
                 seed.copy_from_slice(&slice[..Self::BYTE_SIZE]);
 
-                let secret_key = ed25519_dalek::SecretKey::try_from(seed.as_ref())
-                    .map_err(|_| ErrorKind::InvalidKey)?;
-                let expanded_key = ed25519_dalek::hazmat::ExpandedSecretKey::from(&secret_key);
+                // `SecretKey` is a bare `[u8; 32]` alias with no `Drop`, so the
+                // copy it makes of the seed needs wiping explicitly
+                let secret_key = Zeroizing::new(
+                    ed25519_dalek::SecretKey::try_from(seed.as_ref())
+                        .map_err(|_| ErrorKind::InvalidKey)?,
+                );
+                let expanded_key = ed25519_dalek::hazmat::ExpandedSecretKey::from(&*secret_key);
 
                 Ok(Self {
                     expanded: expanded_key,
@@ -71,10 +84,13 @@ impl TryFrom<&[u8]> for SigningKey {
 
             // little-endian encoded, prehashed key, exported from YubiHSM
             COMBINED_KEY_LENGTH => {
-                let mut key_bytes: [u8; ed25519_dalek::EXPANDED_SECRET_KEY_LENGTH] = slice
-                    [..ed25519_dalek::EXPANDED_SECRET_KEY_LENGTH]
-                    .try_into()
-                    .map_err(|_| ErrorKind::InvalidKey)?;
+                // Holds expanded secret key material, so it must be wiped on drop
+                let mut key_bytes: Zeroizing<[u8; ed25519_dalek::EXPANDED_SECRET_KEY_LENGTH]> =
+                    Zeroizing::new(
+                        slice[..ed25519_dalek::EXPANDED_SECRET_KEY_LENGTH]
+                            .try_into()
+                            .map_err(|_| ErrorKind::InvalidKey)?,
+                    );
 
                 key_bytes[..ed25519_dalek::SECRET_KEY_LENGTH].reverse();
 

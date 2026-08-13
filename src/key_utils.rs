@@ -10,7 +10,7 @@ use rand_core::{OsRng, RngCore};
 use std::{
     fs::{self, OpenOptions},
     io::Write,
-    os::unix::fs::OpenOptionsExt,
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::Path,
 };
 use subtle_encoding::base64;
@@ -19,9 +19,38 @@ use zeroize::Zeroizing;
 /// File permissions for secret data
 pub const SECRET_FILE_PERMS: u32 = 0o600;
 
+/// Returns true if the given Unix mode grants read access beyond the owner
+fn is_readable_by_others(mode: u32) -> bool {
+    mode & 0o077 != 0
+}
+
+/// Warn if a secret file is readable by users other than its owner.
+///
+/// This warns rather than refusing to load: by the time a key file is exposed the
+/// secrecy is already lost, and failing here would take a validator offline
+/// without recovering it.
+fn warn_if_readable_by_others(path: &Path) {
+    match fs::metadata(path) {
+        Ok(metadata) => {
+            let mode = metadata.permissions().mode() & 0o777;
+
+            if is_readable_by_others(mode) {
+                warn!(
+                    "{} is readable by users other than its owner (mode {:04o}): \
+                     restrict it with `chmod 600`",
+                    path.display(),
+                    mode
+                );
+            }
+        }
+        Err(e) => warn!("couldn't check permissions of {}: {}", path.display(), e),
+    }
+}
+
 /// Load Base64-encoded secret data (i.e. key) from the given path
 pub fn load_base64_secret(path: impl AsRef<Path>) -> Result<Zeroizing<Vec<u8>>, Error> {
-    // TODO(tarcieri): check file permissions are correct
+    warn_if_readable_by_others(path.as_ref());
+
     let base64_data = Zeroizing::new(fs::read_to_string(path.as_ref()).map_err(|e| {
         format_err!(
             IoError,
@@ -109,4 +138,23 @@ pub fn generate_key(path: impl AsRef<Path>) -> Result<(), Error> {
     let mut secret_key = Zeroizing::new([0u8; ed25519::SigningKey::BYTE_SIZE]);
     OsRng.fill_bytes(&mut *secret_key);
     write_base64_secret(path, &*secret_key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_readable_by_others;
+
+    #[test]
+    fn owner_only_modes_are_not_readable_by_others() {
+        for mode in [0o600, 0o400, 0o700] {
+            assert!(!is_readable_by_others(mode), "{mode:04o}");
+        }
+    }
+
+    #[test]
+    fn group_or_world_readable_modes_are_detected() {
+        for mode in [0o640, 0o604, 0o644, 0o660, 0o777, 0o606] {
+            assert!(is_readable_by_others(mode), "{mode:04o}");
+        }
+    }
 }
