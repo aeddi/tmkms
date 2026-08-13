@@ -160,7 +160,12 @@ impl SigningKey {
 
 impl Signer<EcdsaSignature> for SigningKey {
     fn try_sign(&self, msg: &[u8]) -> Result<EcdsaSignature, SignError> {
-        assert_eq!(self.elliptic_curve, EllipticCurve::SecP256K1);
+        if self.elliptic_curve != EllipticCurve::SecP256K1 {
+            return Err(SignError::from_source(
+                "ECDSA signing requested for a key that is not secp256k1",
+            ));
+        }
+
         let resp = self.sign(msg, DigestAlgorithm::Sha256)?;
         EcdsaSignature::from_der(&resp.signature)
     }
@@ -168,7 +173,12 @@ impl Signer<EcdsaSignature> for SigningKey {
 
 impl Signer<ed25519::Signature> for SigningKey {
     fn try_sign(&self, msg: &[u8]) -> Result<ed25519::Signature, SignError> {
-        assert_eq!(self.elliptic_curve, EllipticCurve::Ed25519);
+        if self.elliptic_curve != EllipticCurve::Ed25519 {
+            return Err(SignError::from_source(
+                "Ed25519 signing requested for a key that is not Ed25519",
+            ));
+        }
+
         let resp = self.sign(msg, DigestAlgorithm::Sha512)?;
         ed25519::Signature::from_slice(&resp.signature)
     }
@@ -224,8 +234,12 @@ impl TryFrom<SubjectPublicKeyInfoRef<'_>> for Ed25519PublicKey {
             return Err(SpkiError::KeyMalformed);
         }
 
-        Ed25519::try_from(spki.subject_public_key.as_bytes().unwrap())
-            .map_err(|_| SpkiError::KeyMalformed)
-            .map(Ed25519PublicKey)
+        Ed25519::try_from(
+            spki.subject_public_key
+                .as_bytes()
+                .ok_or(SpkiError::KeyMalformed)?,
+        )
+        .map_err(|_| SpkiError::KeyMalformed)
+        .map(Ed25519PublicKey)
     }
 }

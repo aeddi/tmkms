@@ -155,7 +155,7 @@ impl Session {
         let started_at = Instant::now();
         let consensus_sig = chain.keyring.sign(public_key, &canonical_msg)?;
         msg.add_consensus_signature(consensus_sig);
-        self.log_signing_request(&msg, started_at).unwrap();
+        self.log_signing_request(&msg, started_at)?;
 
         // Add extension signature if the message is a precommit for a non-empty block ID.
         if chain.sign_extensions {
@@ -191,8 +191,6 @@ impl Session {
             &req.chain_id,
             &self.config.chain_id,
         );
-
-        assert_eq!(self.config.chain_id.as_str(), &req.chain_id);
 
         let registry = chain::REGISTRY.get();
 
@@ -249,7 +247,10 @@ impl Session {
     ) -> Result<Option<proto::privval::v1beta1::RemoteSignerError>, Error> {
         let msg_type = signable_msg.msg_type();
         let request_state = signable_msg.consensus_state();
-        let mut chain_state = chain.state.lock().unwrap();
+        let mut chain_state = chain
+            .state
+            .lock()
+            .map_err(|e| format_err!(PoisonError, "chain state lock poisoned: {}", e))?;
 
         match chain_state.update_consensus_state(request_state.clone()) {
             Ok(()) => Ok(None),
