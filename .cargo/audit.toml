@@ -4,6 +4,17 @@
 ignore = [
     "RUSTSEC-2019-0036", # failure: type confusion if __private_get_type_id__ is overridden
     "RUSTSEC-2020-0036", # failure is officially deprecated/unmaintained
+    # idna 0.1.5 (punycode hostname spoofing), reached only via sdkms -> url 1.7.2 under the
+    # `fortanixdsm` feature. sdkms has had no release since 2022-06 and pins url 1.x, so no
+    # upgrade path exists. The only URL parsed by that path is the operator-supplied
+    # `api_endpoint`, which is pre-validated with url 2.x before use.
     "RUSTSEC-2024-0421",
+    # paste 1.0.15: proc-macro crate is unmaintained; no known vulnerability.
     "RUSTSEC-2024-0436",
+    # time 0.3.45 (stack exhaustion parsing format descriptions). The fix landed in 0.3.47,
+    # which requires Rust 1.88 and so exceeds this crate's 1.85 MSRV; the resolver holds time
+    # back accordingly. Not reachable here: the transitive users (iq-cometbft, yubihsm, sdkms)
+    # parse timestamps with fixed, well-known formats rather than untrusted format strings.
+    # Revisit when the MSRV moves to 1.88 or later.
+    "RUSTSEC-2026-0009",
 ]
