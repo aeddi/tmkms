@@ -2415,6 +2415,7 @@ dependencies = [
  "subtle-encoding",
  "tempfile",
  "thiserror",
+ "toml",
  "url 2.5.7",
  "uuid",
  "wait-timeout",
