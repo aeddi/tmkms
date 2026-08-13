@@ -10,7 +10,7 @@ use rand_core::{OsRng, RngCore};
 use std::{
     fs::{self, OpenOptions},
     io::Write,
-    os::unix::fs::OpenOptionsExt,
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::Path,
 };
 use subtle_encoding::base64;
@@ -92,7 +92,14 @@ pub fn write_base64_secret(path: impl AsRef<Path>, data: &[u8]) -> Result<(), Er
         .truncate(true)
         .mode(SECRET_FILE_PERMS)
         .open(path.as_ref())
-        .and_then(|mut file| file.write_all(&base64_data))
+        .and_then(|mut file| {
+            // `OpenOptions::mode` only applies to a file this call creates, so an
+            // existing file keeps whatever permissions it already had. Tighten the
+            // open handle before writing, so the secret is never on disk with
+            // permissive modes.
+            file.set_permissions(fs::Permissions::from_mode(SECRET_FILE_PERMS))?;
+            file.write_all(&base64_data)
+        })
         .map_err(|e| {
             format_err!(
                 IoError,
@@ -109,4 +116,40 @@ pub fn generate_key(path: impl AsRef<Path>) -> Result<(), Error> {
     let mut secret_key = Zeroizing::new([0u8; ed25519::SigningKey::BYTE_SIZE]);
     OsRng.fill_bytes(&mut *secret_key);
     write_base64_secret(path, &*secret_key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SECRET_FILE_PERMS, write_base64_secret};
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    fn mode_of(path: &std::path::Path) -> u32 {
+        fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn secret_written_to_a_new_file_is_not_readable_by_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new.key");
+
+        write_base64_secret(&path, b"secret key material").unwrap();
+
+        assert_eq!(mode_of(&path), SECRET_FILE_PERMS);
+    }
+
+    #[test]
+    fn secret_written_over_a_world_readable_file_tightens_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("existing.key");
+        fs::write(&path, b"old contents").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_base64_secret(&path, b"secret key material").unwrap();
+
+        assert_eq!(
+            mode_of(&path),
+            SECRET_FILE_PERMS,
+            "a pre-existing file must not keep permissive modes once a secret is written to it"
+        );
+    }
 }
