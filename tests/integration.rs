@@ -162,7 +162,11 @@ impl KmsProcess {
     }
 
     /// Create a config file for a UNIX KMS and return its path
-    fn create_unix_config(socket_path: &str, key_type: &KeyType, state_dir: &TempDir) -> NamedTempFile {
+    fn create_unix_config(
+        socket_path: &str,
+        key_type: &KeyType,
+        state_dir: &TempDir,
+    ) -> NamedTempFile {
         let mut config_file = NamedTempFile::new().unwrap();
         let key_path = signing_key_path(key_type);
         let state_path = state_dir.path().join("state.json").display().to_string();
