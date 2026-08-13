@@ -2,6 +2,7 @@
 
 use crate::{
     chain,
+    error::{Error, ErrorKind::*},
     prelude::*,
     privval::{ConsensusMsg, ConsensusMsgType},
     proto,
@@ -34,45 +35,72 @@ pub struct InitCommand {
     pub config: Option<PathBuf>,
 
     /// block height
-    #[clap(short = 'H', long = "height")]
-    pub height: Option<i64>,
+    #[clap(short = 'H', long = "height", required = true)]
+    pub height: i64,
 
     /// block round
-    #[clap(short = 'r', long = "round")]
-    pub round: Option<i64>,
+    #[clap(short = 'r', long = "round", required = true)]
+    pub round: i32,
 }
 
 impl Runnable for InitCommand {
     fn run(&self) {
-        let config = APP.config();
-
-        chain::load_config(&config).unwrap_or_else(|e| {
-            status_err!("error loading configuration: {}", e);
+        self.init().unwrap_or_else(|e| {
+            status_err!("{}", e);
             process::exit(1);
         });
+    }
+}
 
-        let chain_id = config.validator[0].chain_id.clone();
+impl InitCommand {
+    /// Sign an initial proposal to establish the height/round/step on the device
+    fn init(&self) -> Result<(), Error> {
+        let config = APP.config();
+
+        chain::load_config(&config)
+            .map_err(|e| format_err!(ConfigError, "error loading configuration: {}", e))?;
+
+        let validator = config
+            .validator
+            .first()
+            .ok_or_else(|| format_err!(ConfigError, "no [[validator]] configured to initialize"))?;
+        let chain_id = validator.chain_id.clone();
+
         let registry = chain::REGISTRY.get();
-        let chain = registry.get_chain(&chain_id).unwrap();
+        let chain = registry.get_chain(&chain_id).ok_or_else(|| {
+            format_err!(ConfigError, "chain '{}' missing from registry", chain_id)
+        })?;
 
         let vote = proto::types::v1beta1::Vote {
-            height: self.height.unwrap(),
-            round: self.round.unwrap() as i32,
+            height: self.height,
+            round: self.round,
             r#type: ConsensusMsgType::Proposal.into(),
             ..Default::default()
         };
-        println!("{vote:?}");
-        let sign_vote_req = ConsensusMsg::from(Vote::try_from(vote).unwrap());
-        let to_sign = sign_vote_req
-            .canonical_bytes(config.validator[0].chain_id.clone())
-            .unwrap();
 
-        let _sig = chain.keyring.sign(None, &to_sign).unwrap();
-
-        println!(
-            "Successfully called the init command with height {}, and round {}",
-            self.height.unwrap(),
-            self.round.unwrap()
+        let msg = ConsensusMsg::from(
+            Vote::try_from(vote)
+                .map_err(|e| format_err!(InvalidMessageError, "invalid vote: {}", e))?,
         );
+
+        // Go through the same double signing checks as a signing request, so
+        // this cannot be used to sign at a height already signed for
+        chain
+            .state
+            .lock()
+            .map_err(|e| format_err!(PoisonError, "state lock poisoned: {}", e))?
+            .update_consensus_state(msg.consensus_state())?;
+
+        let to_sign = msg.canonical_bytes(chain_id)?;
+        chain.keyring.sign(None, &to_sign)?;
+
+        status_ok!(
+            "Initialized",
+            "height: {}, round: {}",
+            self.height,
+            self.round
+        );
+
+        Ok(())
     }
 }

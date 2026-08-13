@@ -103,16 +103,15 @@ impl Runnable for InitCommand {
 
         // Overwriting an identity key is unrecoverable, so require an explicit
         // opt-in rather than silently replacing it
-        if !self.force {
-            for existing in [&config_path, &secret_connection_key]
+        if !self.force
+            && let Some(existing) = [&config_path, &secret_connection_key]
                 .into_iter()
-                .filter(|path| path.exists())
-            {
-                abort!(
-                    "`{}` already exists: refusing to overwrite it (use `-f` to force)",
-                    existing.display()
-                );
-            }
+                .find(|path| path.exists())
+        {
+            abort!(
+                "`{}` already exists: refusing to overwrite it (use `-f` to force)",
+                existing.display()
+            );
         }
 
         let config_toml = ConfigBuilder::new(&kms_home, &networks).generate();
