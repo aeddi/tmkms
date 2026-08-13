@@ -7,12 +7,11 @@ use std::process;
 use yubihsm::connector::usb::Devices;
 
 /// The `yubihsm detect` subcommand
+///
+/// Takes no `-c`/`--config`: detection enumerates USB devices directly and never
+/// reads the config file.
 #[derive(Command, Debug, Default, Parser)]
 pub struct DetectCommand {
-    /// path to tmkms.toml
-    #[clap(short = 'c', long = "config")]
-    pub config: Option<String>,
-
     /// enable verbose debug logging
     #[clap(short = 'v', long = "verbose")]
     pub verbose: bool,

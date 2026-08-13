@@ -197,7 +197,7 @@ pub fn config() -> YubihsmConfig {
 
     if yubihsm_configs.len() != 1 {
         status_err!(
-            "expected one [yubihsm.provider] in config, found: {}",
+            "expected one [[providers.yubihsm]] in config, found: {}",
             yubihsm_configs.len()
         );
         process::exit(1);
