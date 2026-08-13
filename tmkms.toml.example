@@ -39,6 +39,10 @@ reconnect = true # true is the default
 secret_key = "path/to/secret_connection.key"
 protocol_version = "v0.38"
 # max_height = "500000"
+# The `<peer_id>@` prefix on a `tcp://` address authenticates the validator.
+# Omitting it means connecting to whatever answers at that address, which must be
+# opted into explicitly:
+# allow_unverified_peer = false # false is the default
 
 ## Signing provider configuration
 

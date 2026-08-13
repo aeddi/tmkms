@@ -1,5 +1,9 @@
 //! Validator configuration
 
+use crate::{
+    error::{Error, ErrorKind::ConfigError},
+    prelude::*,
+};
 use cometbft::chain;
 use cometbft_config::net;
 use serde::{Deserialize, Serialize};
@@ -31,6 +35,41 @@ pub struct ValidatorConfig {
     /// Deprecated: legacy protocol version number. Must be v0.34 if present.
     // TODO(tarcieri): remove this completely? Here for backwards compatibility.
     pub protocol_version: Option<ProtocolVersion>,
+
+    /// Connect to a `tcp://` validator address that carries no `@peer_id`,
+    /// leaving the validator unauthenticated? (default: false)
+    #[serde(default)]
+    pub allow_unverified_peer: bool,
+}
+
+impl ValidatorConfig {
+    /// Check that this validator will be cryptographically authenticated.
+    ///
+    /// A `tcp://` address with no `@peer_id` prefix means the signer will talk to
+    /// whatever answers at that address. An unauthenticated peer can drive the
+    /// double signing protection state forward and deny signing for the real
+    /// validator, so skipping verification requires an explicit opt-in.
+    pub fn validate_peer_verification(&self) -> Result<(), Error> {
+        if let net::Address::Tcp {
+            peer_id: None,
+            host,
+            port,
+        } = &self.addr
+            && !self.allow_unverified_peer
+        {
+            fail!(
+                ConfigError,
+                "[{}] validator address `tcp://{}:{}` has no peer ID, so the validator cannot be \
+                 authenticated: prefix the address with `<peer_id>@`, or set \
+                 `allow_unverified_peer = true` to accept an unauthenticated peer",
+                self.chain_id,
+                host,
+                port
+            );
+        }
+
+        Ok(())
+    }
 }
 
 /// Protocol version (based on the Tendermint version)
@@ -50,4 +89,48 @@ pub enum ProtocolVersion {
 /// Default value for the `ValidatorConfig` reconnect field
 fn reconnect_default() -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ValidatorConfig;
+
+    const EXAMPLE_PEER_ID: &str = "d1b82bbd8f2cf01c5e8f451da43dce9b369c86a9";
+
+    fn config_with(addr: &str, extra: &str) -> ValidatorConfig {
+        serde_json::from_str(&format!(
+            r#"{{"addr":"{addr}","chain_id":"test-chain"{extra}}}"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn tcp_address_without_peer_id_is_rejected() {
+        let config = config_with("tcp://127.0.0.1:26658", "");
+
+        config
+            .validate_peer_verification()
+            .expect_err("a TCP validator with no peer ID must be rejected");
+    }
+
+    #[test]
+    fn tcp_address_without_peer_id_is_allowed_when_opted_in() {
+        let config = config_with("tcp://127.0.0.1:26658", r#","allow_unverified_peer":true"#);
+
+        config.validate_peer_verification().unwrap();
+    }
+
+    #[test]
+    fn tcp_address_with_peer_id_is_allowed() {
+        let config = config_with(&format!("tcp://{EXAMPLE_PEER_ID}@127.0.0.1:26658"), "");
+
+        config.validate_peer_verification().unwrap();
+    }
+
+    #[test]
+    fn unix_address_is_unaffected() {
+        let config = config_with("unix:///tmp/tmkms.sock", "");
+
+        config.validate_peer_verification().unwrap();
+    }
 }
