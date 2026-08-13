@@ -1,11 +1,9 @@
 ###################################################
 # Test harness for remote signer from Tendermint
 
-# Configure the version of Tendermint here against which you want to run
-# integration tests
-ARG TENDERMINT_VERSION=latest
-
-FROM tendermint/tm-signer-harness:${TENDERMINT_VERSION} AS harness
+# Pinned by digest for reproducibility. Note this image only publishes `latest`
+# and `v0.31.7`, so the harness is a Tendermint 0.31 signer.
+FROM tendermint/tm-signer-harness:v0.31.7@sha256:a12ba671edd41fc124e31ce70a435a38a9ffae1a1ce927d914a2e156c449f382 AS harness
 
 USER root
 
@@ -24,56 +22,28 @@ RUN tendermint init --home=/harness && \
     TMHOME=/harness sh ./gen-validator-integration-cfg.sh
 
 ###################################################
-# Tendermint KMS Dockerfile
+# Tendermint KMS development image
+#
+# Provides the toolchain and test harness for building and testing tmkms; the
+# source tree is expected to be mounted in. Pinned by digest so rebuilds are
+# reproducible.
 
-FROM centos:7 AS build
+FROM rust:1.90-bookworm@sha256:3914072ca0c3b8aad871db9169a651ccfce30cf58303e5d6f2db16d1d8a7e58f AS build
 
-# Install/update RPMs
-RUN yum update -y && \
-    yum groupinstall -y "Development Tools" && \
-    yum install -y \
-    centos-release-scl \
+# Build dependencies: libudev/libusb for YubiHSM and Ledger support, clang for
+# bindgen, cmake for native builds
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    clang \
     cmake \
-    epel-release \
-    libudev-devel \
-    libusbx-devel \
-    openssl-devel \
-    sudo && \
-    yum install -y --enablerepo=epel libsodium-devel && \
-    yum install -y --enablerepo=centos-sclo-rh llvm-toolset-7 && \
-    yum clean all && \
-    rm -rf /var/cache/yum
+    libudev-dev \
+    libusb-1.0-0-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
 
-# Set environment variables to enable SCL packages (llvm-toolset-7)
-ENV LD_LIBRARY_PATH=/opt/rh/llvm-toolset-7/root/usr/lib64
-ENV PATH "/opt/rh/llvm-toolset-7/root/usr/bin:/opt/rh/llvm-toolset-7/root/usr/sbin:$PATH"
-ENV PKG_CONFIG_PATH=/opt/rh/llvm-toolset-7/root/usr/lib64/pkgconfig
-ENV X_SCLS llvm-toolset-7
+RUN rustup component add rustfmt clippy
 
-# Create "developer" user
-RUN useradd developer && \
-    echo 'developer ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/developer
-
-# Switch to the "developer" user
-USER developer
-WORKDIR /home/developer
-
-# Include cargo in the path
-ENV PATH "$PATH:/home/developer/.cargo/bin"
-
-# Install rustup
-RUN curl https://sh.rustup.rs -sSf | sh -s -- -y && \
-    rustup update && \
-    rustup component add rustfmt && \
-    rustup component add clippy && \
-    cargo install cargo-audit
-
-# Configure Rust environment variables
-ENV RUSTFLAGS "-Ctarget-feature=+aes,+ssse3"
-ENV RUST_BACKTRACE full
-
-###################################################
-# Remote validator integration testing
+# Unprivileged user to build and run as
+RUN useradd --create-home --shell /bin/bash developer
 
 # We need the generated harness and Tendermint configuration
 COPY --from=harness /harness /harness
@@ -84,7 +54,13 @@ COPY --from=harness /usr/bin/tm-signer-harness /usr/bin/tm-signer-harness
 # We need a secret connection key
 COPY tests/support/secret_connection.key /harness/
 
-USER root
-# Ensure the /harness folder has the right owner
 RUN chown -R developer /harness
+
+# Configure Rust environment variables.
+#
+# `-Ctarget-feature=+aes,+ssse3` is recommended for x86_64 builds (see README) but
+# is not valid on other architectures, so it is left for the caller to set.
+ENV RUST_BACKTRACE=full
+
 USER developer
+WORKDIR /home/developer

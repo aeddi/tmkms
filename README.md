@@ -44,6 +44,7 @@ instructions on how to build Tendermint KMS).
 The following signing backend providers are presently supported:
 
 #### Hardware Security Modules (recommended)
+
 - [FortanixDSM](./README.fortanixdsm.md) (gated under the `fortanixdsm` cargo feature.
   See [README.fortanixdsm.md](./README.fortanixdsm.md)
 - [YubiHSM2] (gated under the `yubihsm` cargo feature. See [README.yubihsm.md][yubihsm2])
@@ -181,8 +182,10 @@ section above.
 - Install **rustfmt**: `rustup component add rustfmt`
 - Install **clippy**: `rustup component add clippy`
 
-Alternatively, you can build a Docker image from the [Dockerfile] in the top
-level of the repository, which is what is used to run tests in CI.
+Alternatively, you can build a development image from the [Dockerfile] in the top
+level of the repository, which provides the toolchain plus the Tendermint signer
+test harness. CI itself runs the checks directly on GitHub-hosted runners rather
+than in this image.
 
 Before opening a pull request, please run the checks below:
 
@@ -224,8 +227,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
-[//]: # (badges)
-
+[//]: # 'badges'
 [crate-image]: https://img.shields.io/crates/v/tmkms.svg
 [crate-link]: https://crates.io/crates/tmkms
 [build-image]: https://github.com/iqlusioninc/tmkms/actions/workflows/ci.yml/badge.svg
@@ -233,9 +235,7 @@ limitations under the License.
 [license-image]: https://img.shields.io/badge/license-Apache2.0-blue.svg
 [license-link]: https://github.com/iqlusioninc/tmkms/blob/main/LICENSE
 [rustc-image]: https://img.shields.io/badge/rustc-1.85+-blue.svg
-
-[//]: # (links)
-
+[//]: # 'links'
 [CometBFT]: https://cometbft.com/
 [Tendermint]: https://tendermint.com/
 [Cosmos Validators]: https://hub.cosmos.network/main/validators/validator-faq
