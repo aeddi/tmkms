@@ -82,6 +82,10 @@ pub enum ErrorKind {
     #[error("serialization error")]
     SerializationError,
 
+    /// Failed to persist double signing protection state
+    #[error("state persistence failed")]
+    StateSyncError,
+
     /// Signing operation failed
     #[error("signing operation failed")]
     SigningError,
@@ -218,6 +222,46 @@ impl From<cometbft_proto::Error> for Error {
 
 impl From<chain::state::StateError> for Error {
     fn from(other: chain::state::StateError) -> Self {
-        ErrorKind::DoubleSign.context(other).into()
+        use chain::state::StateErrorKind;
+
+        // Only refusals to sign belong in the double-sign family; a failure to
+        // persist state is an I/O problem and must not be reported as an
+        // attempted equivocation
+        let kind = match other.kind() {
+            StateErrorKind::DoubleSign
+            | StateErrorKind::HeightRegression
+            | StateErrorKind::RoundRegression
+            | StateErrorKind::StepRegression => ErrorKind::DoubleSign,
+            StateErrorKind::SyncError => ErrorKind::StateSyncError,
+        };
+
+        kind.context(other).into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Error, ErrorKind};
+    use crate::chain::state::{StateError, StateErrorKind};
+
+    #[test]
+    fn state_sync_failure_is_not_reported_as_a_double_sign() {
+        let error = Error::from(StateError::from(StateErrorKind::SyncError));
+
+        assert_eq!(*error.kind(), ErrorKind::StateSyncError);
+    }
+
+    #[test]
+    fn double_sign_attempt_is_reported_as_a_double_sign() {
+        let error = Error::from(StateError::from(StateErrorKind::DoubleSign));
+
+        assert_eq!(*error.kind(), ErrorKind::DoubleSign);
+    }
+
+    #[test]
+    fn height_regression_is_reported_as_a_double_sign() {
+        let error = Error::from(StateError::from(StateErrorKind::HeightRegression));
+
+        assert_eq!(*error.kind(), ErrorKind::DoubleSign);
     }
 }
