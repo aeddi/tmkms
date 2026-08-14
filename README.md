@@ -190,8 +190,10 @@ section above.
 - Install **rustfmt**: `rustup component add rustfmt`
 - Install **clippy**: `rustup component add clippy`
 
-Alternatively, you can build a Docker image from the [Dockerfile] in the top
-level of the repository, which is what is used to run tests in CI.
+Alternatively, you can build a development image from the [Dockerfile] in the top
+level of the repository, which provides the toolchain plus the Tendermint signer
+test harness. CI itself runs the checks directly on GitHub-hosted runners rather
+than in this image.
 
 Before opening a pull request, please run the checks below:
 
