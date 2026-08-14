@@ -110,8 +110,38 @@ fn resolve_state_file_path(state_file: Option<&Path>, chain_id: &Id) -> Result<P
     })
 }
 
+/// Ensure no two chains are configured to share a state file.
+///
+/// Each chain keeps its own in-memory state and rewrites the whole file, so a
+/// shared path means the chains silently clobber each other's last-signed
+/// height. After a restart a chain can then load a lower height than it already
+/// signed at and sign those heights again, which is slashable.
+fn check_state_files_are_unique(configs: &[ChainConfig]) -> Result<(), Error> {
+    let mut seen: Vec<(PathBuf, &Id)> = Vec::with_capacity(configs.len());
+
+    for config in configs {
+        let path = resolve_state_file_path(config.state_file.as_deref(), &config.id)?;
+
+        if let Some((_, first)) = seen.iter().find(|(seen_path, _)| *seen_path == path) {
+            fail!(
+                ErrorKind::ConfigError,
+                "chains `{}` and `{}` are both configured to use the state file `{}`:                  each chain requires its own",
+                first,
+                config.id,
+                path.display()
+            );
+        }
+
+        seen.push((path, &config.id));
+    }
+
+    Ok(())
+}
+
 /// Initialize the chain registry from the configuration file
 pub fn load_config(config: &KmsConfig) -> Result<(), Error> {
+    check_state_files_are_unique(&config.chain)?;
+
     for config in &config.chain {
         REGISTRY.register(Chain::from_config(config)?)?;
     }
@@ -122,8 +152,60 @@ pub fn load_config(config: &KmsConfig) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Id, resolve_state_file_path};
+    use super::{Id, check_state_files_are_unique, resolve_state_file_path};
+    use crate::config::chain::ChainConfig;
     use std::path::{Path, PathBuf};
+
+    fn chain_config(id: &str, state_file: Option<&str>) -> ChainConfig {
+        let state_file = match state_file {
+            Some(path) => format!(r#","state_file":"{path}""#),
+            None => String::new(),
+        };
+
+        serde_json::from_str(&format!(
+            r#"{{"id":"{id}","key_format":{{"type":"bech32","account_key_prefix":"cosmospub","consensus_key_prefix":"cosmosvalconspub"}}{state_file}}}"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn distinct_state_files_are_accepted() {
+        let configs = [
+            chain_config("chain-a", Some("/var/lib/tmkms/a.json")),
+            chain_config("chain-b", Some("/var/lib/tmkms/b.json")),
+        ];
+
+        check_state_files_are_unique(&configs).unwrap();
+    }
+
+    #[test]
+    fn default_state_file_paths_do_not_collide() {
+        let configs = [chain_config("chain-a", None), chain_config("chain-b", None)];
+
+        check_state_files_are_unique(&configs).unwrap();
+    }
+
+    #[test]
+    fn a_shared_state_file_is_rejected() {
+        let configs = [
+            chain_config("chain-a", Some("/var/lib/tmkms/shared.json")),
+            chain_config("chain-b", Some("/var/lib/tmkms/shared.json")),
+        ];
+
+        check_state_files_are_unique(&configs)
+            .expect_err("two chains sharing a state file must be rejected");
+    }
+
+    #[test]
+    fn paths_that_resolve_to_the_same_file_are_rejected() {
+        let configs = [
+            chain_config("chain-a", Some("/var/lib/tmkms/shared.json")),
+            chain_config("chain-b", Some("/var/lib/tmkms/./shared.json")),
+        ];
+
+        check_state_files_are_unique(&configs)
+            .expect_err("equivalent paths must be treated as a collision");
+    }
 
     #[test]
     fn default_state_file_path_is_absolute_and_names_the_chain() {
