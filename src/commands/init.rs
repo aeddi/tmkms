@@ -39,6 +39,10 @@ pub struct InitCommand {
     #[clap(short = 'n', long = "networks")]
     networks: Option<String>,
 
+    /// overwrite an existing configuration and identity key
+    #[clap(short = 'f', long = "force")]
+    force: bool,
+
     /// path where config files should be generated
     output_paths: Vec<PathBuf>,
 }
@@ -95,6 +99,21 @@ impl Runnable for InitCommand {
         set_permissions(&secrets_dir, SECRETS_DIR_PERMISSIONS);
 
         let config_path = kms_home.join(CONFIG_FILE_NAME);
+        let secret_connection_key = secrets_dir.join(SECRET_CONNECTION_KEY);
+
+        // Overwriting an identity key is unrecoverable, so require an explicit
+        // opt-in rather than silently replacing it
+        if !self.force
+            && let Some(existing) = [&config_path, &secret_connection_key]
+                .into_iter()
+                .find(|path| path.exists())
+        {
+            abort!(
+                "`{}` already exists: refusing to overwrite it (use `-f` to force)",
+                existing.display()
+            );
+        }
+
         let config_toml = ConfigBuilder::new(&kms_home, &networks).generate();
 
         fs::write(&config_path, config_toml).unwrap_or_else(|e| {
@@ -103,7 +122,6 @@ impl Runnable for InitCommand {
 
         status_ok!("Generated", "KMS configuration: {}", config_path.display());
 
-        let secret_connection_key = secrets_dir.join(SECRET_CONNECTION_KEY);
         key_utils::generate_key(&secret_connection_key).unwrap_or_else(|e| {
             abort!(
                 "couldn't generate `{}`: {}",
