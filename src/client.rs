@@ -66,8 +66,8 @@ impl Client {
 /// Main loop for all clients. Handles reconnecting in the event of an error
 fn main_loop(config: ValidatorConfig) -> Result<(), Error> {
     while let Err(e) = run_client(config.clone()) {
-        // `PoisonError` is unrecoverable
-        if *e.kind() == ErrorKind::PoisonError {
+        // Neither a poisoned lock nor a bad config can be fixed by reconnecting
+        if matches!(*e.kind(), ErrorKind::PoisonError | ErrorKind::ConfigError) {
             error!("[{}@{}] FATAL -- {}", &config.chain_id, &config.addr, e);
             return Err(e);
         } else {
