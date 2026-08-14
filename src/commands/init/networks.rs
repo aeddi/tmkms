@@ -80,15 +80,4 @@ impl Network {
             Network::Persistence => "core-1",
         }
     }
-
-    /// Get the schema file for this network
-    pub fn schema_file(&self) -> &str {
-        match self {
-            Network::CosmosHub => "cosmos-sdk.toml",
-            Network::IrisHub => "iris.toml",
-            Network::SentinelHub => "sentinelhub.toml",
-            Network::Osmosis => "osmosis.toml",
-            Network::Persistence => "persistence.toml",
-        }
-    }
 }
