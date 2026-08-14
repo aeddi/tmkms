@@ -15,7 +15,7 @@ use std::{
 };
 
 /// Subdirectories to create within the parent directory
-pub const SUBDIRECTORIES: &[&str] = &["schema", "secrets", "state"];
+pub const SUBDIRECTORIES: &[&str] = &["secrets", "state"];
 
 /// Filesystem permissions to set on the secrets directory
 pub const SECRETS_DIR_PERMISSIONS: u32 = 0o700;
