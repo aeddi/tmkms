@@ -6,6 +6,7 @@ use clap::Parser;
 use k256::ecdsa;
 use rand_core::{OsRng, RngCore};
 use std::{path::Path, path::PathBuf, process};
+use zeroize::Zeroizing;
 
 /// Default type of key to generate
 pub const DEFAULT_KEY_TYPE: &str = "consensus";
@@ -68,9 +69,12 @@ fn generate_secp256k1_key(output_path: &Path) {
 
 /// Randomly generate a Base64-encoded Ed25519 key and store it at the given path
 fn generate_ed25519_key(output_path: &Path) {
-    let mut sk_bytes = [0u8; 32];
-    OsRng.fill_bytes(&mut sk_bytes);
-    let sk = ed25519_dalek::SigningKey::from(sk_bytes);
+    // `Zeroizing` wipes the seed when this scope ends; `SigningKey` zeroizes
+    // itself on drop, but the buffer it was built from would otherwise be left
+    // in place
+    let mut sk_bytes = Zeroizing::new([0u8; 32]);
+    OsRng.fill_bytes(sk_bytes.as_mut());
+    let sk = ed25519_dalek::SigningKey::from(*sk_bytes);
 
     key_utils::write_base64_secret(output_path, sk.as_bytes()).unwrap_or_else(|e| {
         status_err!("{}", e);
