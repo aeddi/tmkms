@@ -9,7 +9,7 @@ use crate::{
 };
 use abscissa_core::{Command, Runnable};
 use clap::{Parser, Subcommand};
-use cometbft::Vote;
+use cometbft::proposal::Proposal;
 use std::{path::PathBuf, process};
 
 /// `ledger` subcommand
@@ -71,26 +71,10 @@ impl InitCommand {
             format_err!(ConfigError, "chain '{}' missing from registry", chain_id)
         })?;
 
-        let vote = proto::types::v1beta1::Vote {
-            height: self.height,
-            round: self.round,
-            r#type: ConsensusMsgType::Proposal.into(),
-            ..Default::default()
-        };
-
-        let msg = ConsensusMsg::from(
-            Vote::try_from(vote)
-                .map_err(|e| format_err!(InvalidMessageError, "invalid vote: {}", e))?,
-        );
+        let msg = proposal_at(self.height, self.round)?;
 
         // Go through the same double signing checks as a signing request, so this
-        // cannot be used to sign at a height already signed for.
-        //
-        // NOTE: this is currently unreachable. The `Vote` built above carries no
-        // timestamp and a proposal message code, both of which `Vote::try_from`
-        // rejects, so the command always fails before reaching this point. Left in
-        // place so the check is already correct once the message construction is
-        // fixed; see the backlog task for `tmkms ledger init`.
+        // cannot be used to sign at a height already signed for
         chain
             .state
             .lock()
@@ -108,5 +92,64 @@ impl InitCommand {
         );
 
         Ok(())
+    }
+}
+
+/// Build the proposal signed to establish the height/round/step on the device.
+///
+/// A `Vote` cannot carry a proposal message type (`vote::Type` accepts only
+/// prevote and precommit), so this must be a `Proposal`. `pol_round` is -1, the
+/// encoding for "no proof-of-lock round".
+fn proposal_at(height: i64, round: i32) -> Result<ConsensusMsg, Error> {
+    let proposal = proto::types::v1beta1::Proposal {
+        r#type: ConsensusMsgType::Proposal.into(),
+        height,
+        round,
+        pol_round: -1,
+        ..Default::default()
+    };
+
+    let proposal = Proposal::try_from(proposal)
+        .map_err(|e| format_err!(InvalidMessageError, "invalid proposal: {}", e))?;
+
+    Ok(ConsensusMsg::Proposal(proposal))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::proposal_at;
+    use crate::privval::ConsensusMsgType;
+
+    #[test]
+    fn the_previous_vote_based_construction_always_failed() {
+        // What the command did before: a Vote stamped with a proposal type and no timestamp
+        let vote = crate::proto::types::v1beta1::Vote {
+            height: 12345,
+            round: 2,
+            r#type: ConsensusMsgType::Proposal.into(),
+            ..Default::default()
+        };
+
+        cometbft::Vote::try_from(vote).expect_err("the old construction could never succeed");
+    }
+
+    #[test]
+    fn builds_a_signable_proposal() {
+        let msg = proposal_at(12345, 2).expect("proposal should be constructible");
+
+        assert_eq!(msg.msg_type(), ConsensusMsgType::Proposal);
+        assert_eq!(msg.consensus_state().height.value(), 12345);
+        assert_eq!(msg.consensus_state().round.value(), 2);
+    }
+
+    #[test]
+    fn canonical_bytes_can_be_produced() {
+        let msg = proposal_at(1, 0).unwrap();
+
+        let bytes = msg
+            .canonical_bytes("test-chain".parse().unwrap())
+            .expect("canonical bytes should be produced");
+
+        assert!(!bytes.is_empty());
     }
 }
