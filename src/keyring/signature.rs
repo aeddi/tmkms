@@ -37,7 +37,12 @@ impl From<ed25519::Signature> for Signature {
 
 impl From<Signature> for cometbft::Signature {
     fn from(sig: Signature) -> cometbft::Signature {
-        sig.to_vec().try_into().expect("signature should be valid")
+        // `cometbft::Signature` only rejects signatures longer than 64 bytes.
+        // Ed25519 signatures are exactly 64 and secp256k1 ECDSA signatures are at
+        // most 64 in their fixed-width encoding, so this cannot fail.
+        sig.to_vec()
+            .try_into()
+            .expect("signature length is bounded by 64 bytes")
     }
 }
 

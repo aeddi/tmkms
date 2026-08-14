@@ -132,9 +132,9 @@ impl State {
             }
         }
 
-        self.consensus_state = new_state;
-
-        self.sync_to_disk().map_err(|e| {
+        // Persist before advancing the in-memory guard, so a failed write never
+        // leaves the guard claiming a height that is not durably recorded
+        self.sync_to_disk(&new_state).map_err(|e| {
             format_err!(
                 StateErrorKind::SyncError,
                 "error writing state to {}: {}",
@@ -142,6 +142,9 @@ impl State {
                 e
             )
         })?;
+
+        self.consensus_state = new_state;
+
         Ok(())
     }
 
@@ -158,11 +161,9 @@ impl State {
                     height: output.latest_block_height,
                     ..Default::default()
                 };
-                self.consensus_state = new_state;
-
                 // Persist before signing resumes, so a crash cannot revert to
                 // the older on-disk height
-                self.sync_to_disk().map_err(|e| {
+                self.sync_to_disk(&new_state).map_err(|e| {
                     format_err!(
                         StateErrorKind::SyncError,
                         "error writing state to {}: {}",
@@ -170,6 +171,8 @@ impl State {
                         e
                     )
                 })?;
+
+                self.consensus_state = new_state;
 
                 info!("updated block height from hook: {}", hook_height);
             } else {
@@ -207,20 +210,20 @@ impl State {
             state_file_path: path.to_owned(),
         };
 
-        initial_state.sync_to_disk()?;
+        initial_state.sync_to_disk(&initial_state.consensus_state)?;
 
         Ok(initial_state)
     }
 
-    /// Sync the current state to disk
-    fn sync_to_disk(&self) -> io::Result<()> {
+    /// Write the given consensus state to disk
+    fn sync_to_disk(&self, consensus_state: &consensus::State) -> io::Result<()> {
         debug!(
             "writing new consensus state to {}: {:?}",
             self.state_file_path.display(),
-            &self.consensus_state
+            consensus_state
         );
 
-        let json = serde_json::to_string(&self.consensus_state)?;
+        let json = serde_json::to_string(consensus_state)?;
 
         atomic_durable_write(&self.state_file_path, json.as_bytes())?;
 
@@ -482,6 +485,30 @@ mod tests {
             state.consensus_state().height.value(),
             100,
             "state must not advance on an out-of-range hook height"
+        );
+    }
+
+    #[test]
+    fn a_failed_persist_leaves_the_in_memory_guard_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        // A directory in place of the state file makes every write fail
+        let path = dir.path().join("state.json");
+        fs::create_dir(&path).unwrap();
+
+        let mut state = State {
+            consensus_state: state!(100, 0, 0, None),
+            state_file_path: path,
+        };
+
+        let err = state
+            .update_consensus_state(state!(101, 0, 0, None))
+            .expect_err("expected the write to fail");
+
+        assert_eq!(err.kind(), StateErrorKind::SyncError);
+        assert_eq!(
+            state.consensus_state().height.value(),
+            100,
+            "the guard must not advance when the state could not be persisted"
         );
     }
 
