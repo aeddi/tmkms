@@ -1,0 +1,56 @@
+# Release image for tmkms.
+#
+# Deliberately kept separate from the development/test-harness `Dockerfile`, and
+# built to be a drop-in replacement for the previously published image:
+#
+#   ENTRYPOINT is the tmkms binary, so callers pass subcommands as arguments
+#   (e.g. `start -c /etc/tmkms/tmkms.toml`), binary at /usr/local/bin/tmkms,
+#   Debian bookworm runtime, linux/amd64.
+#
+# Build:
+#   docker build -f Dockerfile.release -t tmkms:local .
+# Override the enabled signing backends with --build-arg FEATURES=softsign
+
+FROM rust:1.90-bookworm@sha256:3914072ca0c3b8aad871db9169a651ccfce30cf58303e5d6f2db16d1d8a7e58f AS builder
+
+# libudev/libusb are needed to build the yubihsm and ledger backends, clang for
+# bindgen
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    clang \
+    cmake \
+    libudev-dev \
+    libusb-1.0-0-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Signing backends compiled into the binary
+ARG FEATURES=softsign,yubihsm,ledger
+
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY tests ./tests
+
+# `--locked` keeps the build reproducible against the committed Cargo.lock
+RUN cargo build --release --locked --no-default-features --features "${FEATURES}" && \
+    strip target/release/tmkms
+
+###################################################
+
+FROM debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241 AS runtime
+
+# Runtime shared libraries for the USB-backed signing backends, plus CA
+# certificates for any HTTPS-based provider
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libudev1 \
+    libusb-1.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/target/release/tmkms /usr/local/bin/tmkms
+
+# Runs as root to match the previously published image: the signing state and
+# key files are supplied on a host-mounted volume whose ownership is managed
+# outside this image.
+ENTRYPOINT ["tmkms"]
