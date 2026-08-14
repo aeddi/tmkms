@@ -9,8 +9,9 @@ SECRET_KEY=${SECRET_KEY:-${OUTPUT_PATH}/secret_connection.key}
 OUTPUT_FILE=${OUTPUT_FILE:-${OUTPUT_PATH}/tmkms.toml}
 #TODO: Restore once https://github.com/tendermint/tendermint/issues/3105 is resolved
 #VALIDATOR_ID=${VALIDATOR_ID:-"f88883b673fc69d7869cab098de3bafc2ff76eb8"}
-#VALIDATOR_ADDR=${VALIDATOR_ADDR:-"tcp://${VALIDATOR_ID}@127.0.0.1:61278"}
-VALIDATOR_ADDR=${VALIDATOR_ADDR:-"tcp://127.0.0.1:61278"}
+# The peer ID is required: tmkms refuses to connect to an unauthenticated validator
+# unless `allow_unverified_peer = true` is set.
+VALIDATOR_ADDR=${VALIDATOR_ADDR:-"tcp://${VALIDATOR_ID}@127.0.0.1:61278"}
 CFG_TEMPLATE=$(cat <<-EOF
 # Information about Tenderment blockchain networks this KMS services
 [[chain]]
