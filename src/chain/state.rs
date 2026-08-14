@@ -20,6 +20,18 @@ use std::{
 };
 use tempfile::NamedTempFile;
 
+/// Whether existing state was found on disk, or a fresh state file had to be
+/// created because none existed
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum LoadOutcome {
+    /// State was loaded from an existing file
+    Loaded,
+
+    /// No state file existed, so one was created at height 0. Double signing
+    /// protection has no history of previously signed blocks.
+    CreatedFresh,
+}
+
 /// State tracking for double signing prevention
 pub struct State {
     consensus_state: consensus::State,
@@ -27,8 +39,9 @@ pub struct State {
 }
 
 impl State {
-    /// Load the state from the given path
-    pub fn load_state<P>(path: P) -> Result<Self, Error>
+    /// Load the state from the given path, reporting whether an existing state
+    /// file was found or a fresh one had to be created
+    pub fn load_state<P>(path: P) -> Result<(Self, LoadOutcome), Error>
     where
         P: AsRef<Path>,
     {
@@ -43,14 +56,18 @@ impl State {
                     )
                 })?;
 
-                Ok(Self {
-                    consensus_state,
-                    state_file_path: path.as_ref().to_owned(),
-                })
+                Ok((
+                    Self {
+                        consensus_state,
+                        state_file_path: path.as_ref().to_owned(),
+                    },
+                    LoadOutcome::Loaded,
+                ))
             }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                Self::write_initial_state(path.as_ref())
-            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok((
+                Self::write_initial_state(path.as_ref())?,
+                LoadOutcome::CreatedFresh,
+            )),
             Err(e) => Err(Error::from(e)),
         }
     }
@@ -484,5 +501,35 @@ mod tests {
             100,
             "the more conservative on-disk height must win"
         );
+    }
+
+    #[test]
+    fn missing_state_file_is_reported_as_freshly_created() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+
+        let (state, outcome) = State::load_state(&path).unwrap();
+
+        assert_eq!(
+            outcome,
+            LoadOutcome::CreatedFresh,
+            "creating a fresh state file must be distinguishable from loading one"
+        );
+        assert_eq!(state.consensus_state().height.value(), 0);
+        assert!(
+            path.exists(),
+            "a fresh state file should be written to disk"
+        );
+    }
+
+    #[test]
+    fn existing_state_file_is_reported_as_loaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        State::load_state(&path).unwrap();
+
+        let (_state, outcome) = State::load_state(&path).unwrap();
+
+        assert_eq!(outcome, LoadOutcome::Loaded);
     }
 }
