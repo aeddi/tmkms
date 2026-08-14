@@ -11,7 +11,7 @@ pub use self::{
 };
 use crate::{
     config::{KmsConfig, chain::ChainConfig},
-    error::Error,
+    error::{Error, ErrorKind::HookError},
     keyring::{self, KeyRing},
     prelude::*,
 };
@@ -44,15 +44,20 @@ impl Chain {
         let mut state = State::load_state(state_file)?;
 
         if let Some(ref hook) = config.state_hook {
-            match state::hook::run(hook) {
-                Ok(hook_output) => state.update_from_hook_output(hook_output)?,
-                Err(e) => {
-                    if hook.fail_closed {
-                        return Err(e);
-                    } else {
-                        // fail open: note the error to the log and proceed anyway
-                        error!("error invoking state hook for chain {}: {}", config.id, e);
-                    }
+            // Applying the hook output can fail too (e.g. a block height beyond
+            // the sanity limit), so both failures share the fail-closed policy
+            let hook_result = state::hook::run(hook).and_then(|hook_output| {
+                state
+                    .update_from_hook_output(hook_output)
+                    .map_err(|e| format_err!(HookError, "{}", e).into())
+            });
+
+            if let Err(e) = hook_result {
+                if hook.fail_closed {
+                    return Err(e);
+                } else {
+                    // fail open: note the error to the log and proceed anyway
+                    error!("error invoking state hook for chain {}: {}", config.id, e);
                 }
             }
         }

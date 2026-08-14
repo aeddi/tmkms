@@ -1,12 +1,11 @@
 use serde::Deserialize;
-use std::ffi::OsString;
 
 /// Configuration for a particular hook to invoke
 #[derive(Default, Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct HookConfig {
     /// Command (with arguments) to invoke
-    pub cmd: Vec<OsString>,
+    pub cmd: Vec<String>,
 
     /// Timeout (in seconds) to wait when executing the command (default 5)
     pub timeout_secs: Option<u64>,
@@ -14,4 +13,28 @@ pub struct HookConfig {
     /// Whether or not to fail open or closed if this command fails to execute.
     /// Failing closed will prevent the KMS from starting if this command fails.
     pub fail_closed: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HookConfig;
+
+    #[test]
+    fn deserializes_from_toml() {
+        let config: HookConfig = toml::from_str(
+            r#"
+            cmd = ["/usr/bin/tmkms-state-hook", "--chain-id", "test-chain"]
+            timeout_secs = 2
+            fail_closed = true
+        "#,
+        )
+        .expect("state_hook config should deserialize from TOML");
+
+        assert_eq!(
+            config.cmd,
+            vec!["/usr/bin/tmkms-state-hook", "--chain-id", "test-chain"]
+        );
+        assert_eq!(config.timeout_secs, Some(2));
+        assert!(config.fail_closed);
+    }
 }

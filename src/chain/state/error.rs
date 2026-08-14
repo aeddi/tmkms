@@ -30,6 +30,11 @@ pub enum StateErrorKind {
     /// Error syncing state to disk
     #[error("error syncing state to disk")]
     SyncError,
+
+    /// Block height from the state hook diverges from the last known state by
+    /// more than the sanity limit
+    #[error("state hook block height beyond sanity limit")]
+    HookHeightOutOfRange,
 }
 
 impl StateErrorKind {

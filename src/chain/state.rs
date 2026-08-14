@@ -143,9 +143,25 @@ impl State {
                 };
                 self.consensus_state = new_state;
 
+                // Persist before signing resumes, so a crash cannot revert to
+                // the older on-disk height
+                self.sync_to_disk().map_err(|e| {
+                    format_err!(
+                        StateErrorKind::SyncError,
+                        "error writing state to {}: {}",
+                        self.state_file_path.display(),
+                        e
+                    )
+                })?;
+
                 info!("updated block height from hook: {}", hook_height);
             } else {
-                warn!(
+                // A delta this large means either a broken hook or a signer
+                // that is genuinely far behind. Both readings argue against
+                // signing against the state we have, so report it and let the
+                // hook's `fail_closed` setting decide whether to start.
+                fail!(
+                    StateErrorKind::HookHeightOutOfRange,
                     "hook block height more than sanity limit: {} (delta: {}, max: {})",
                     output.latest_block_height,
                     delta,
@@ -398,5 +414,75 @@ mod tests {
 
         atomic_durable_write(&path, b"contents")
             .expect_err("expected error when parent directory does not exist");
+    }
+
+    /// Build a `State` backed by a real file in the given directory
+    fn state_in(dir: &Path, consensus_state: consensus::State) -> State {
+        State {
+            consensus_state,
+            state_file_path: dir.join("state.json"),
+        }
+    }
+
+    #[test]
+    fn hook_height_within_sanity_limit_is_persisted() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = state_in(dir.path(), state!(100, 0, 0, None));
+
+        state
+            .update_from_hook_output(hook::Output {
+                latest_block_height: block::Height::from(200u32),
+            })
+            .unwrap();
+
+        assert_eq!(state.consensus_state().height.value(), 200);
+
+        let persisted: consensus::State =
+            serde_json::from_str(&fs::read_to_string(dir.path().join("state.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            persisted.height.value(),
+            200,
+            "hook-derived height must be written to disk"
+        );
+    }
+
+    #[test]
+    fn hook_height_beyond_sanity_limit_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = state_in(dir.path(), state!(100, 0, 0, None));
+
+        let err = state
+            .update_from_hook_output(hook::Output {
+                latest_block_height: block::Height::from(
+                    100 + hook::BLOCK_HEIGHT_SANITY_LIMIT as u32,
+                ),
+            })
+            .expect_err("expected an out-of-range error");
+
+        assert_eq!(err.kind(), StateErrorKind::HookHeightOutOfRange);
+        assert_eq!(
+            state.consensus_state().height.value(),
+            100,
+            "state must not advance on an out-of-range hook height"
+        );
+    }
+
+    #[test]
+    fn hook_height_below_current_is_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = state_in(dir.path(), state!(100, 0, 0, None));
+
+        state
+            .update_from_hook_output(hook::Output {
+                latest_block_height: block::Height::from(50u32),
+            })
+            .expect("a lower hook height is not an error");
+
+        assert_eq!(
+            state.consensus_state().height.value(),
+            100,
+            "the more conservative on-disk height must win"
+        );
     }
 }
