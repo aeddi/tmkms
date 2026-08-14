@@ -1,7 +1,8 @@
 //! TCP socket connection to a validator
 
 use std::{
-    net::{TcpStream, ToSocketAddrs},
+    io,
+    net::{SocketAddr, TcpStream, ToSocketAddrs},
     path::PathBuf,
     time::Duration,
 };
@@ -44,19 +45,20 @@ pub fn open_secret_connection(
     // `TcpStream::connect` has no timeout of its own, so an unreachable validator
     // would otherwise hang here for the OS default (minutes). Note that DNS
     // resolution below is still unbounded: std offers no way to time it out.
-    let addr = format!("{host}:{port}")
+    let addrs = format!("{host}:{port}")
         .to_socket_addrs()?
-        .next()
-        .ok_or_else(|| {
-            format_err!(
-                ConfigError,
-                "couldn't resolve validator address: {}:{}",
-                host,
-                port
-            )
-        })?;
+        .collect::<Vec<_>>();
 
-    let socket = TcpStream::connect_timeout(&addr, timeout)?;
+    if addrs.is_empty() {
+        fail!(
+            ConfigError,
+            "couldn't resolve validator address: {}:{}",
+            host,
+            port
+        );
+    }
+
+    let socket = connect_first_available(&addrs, timeout)?;
     socket.set_read_timeout(Some(timeout))?;
     socket.set_write_timeout(Some(timeout))?;
 
@@ -86,4 +88,60 @@ pub fn open_secret_connection(
     }
 
     Ok(connection)
+}
+
+/// Connect to the first of `addrs` that accepts a connection within `timeout`.
+///
+/// `TcpStream::connect` tries every address a name resolves to, so a host with an
+/// unreachable AAAA record still connects over IPv4. `TcpStream::connect_timeout`
+/// takes a single address and has no such fallback, so the iteration is done here.
+fn connect_first_available(addrs: &[SocketAddr], timeout: Duration) -> io::Result<TcpStream> {
+    let mut last_error = None;
+
+    for addr in addrs {
+        match TcpStream::connect_timeout(addr, timeout) {
+            Ok(socket) => return Ok(socket),
+            Err(e) => {
+                debug!("couldn't connect to {}: {}", addr, e);
+                last_error = Some(e);
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "no addresses to connect to")
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::connect_first_available;
+    use std::{
+        net::{SocketAddr, TcpListener},
+        time::Duration,
+    };
+
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
+    #[test]
+    fn falls_back_to_a_later_address_when_the_first_is_unreachable() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let reachable = listener.local_addr().unwrap();
+
+        // Port 1 on the loopback interface has nothing listening, standing in for
+        // the unreachable AAAA record a dual-stack host resolves to first
+        let unreachable: SocketAddr = "127.0.0.1:1".parse().unwrap();
+
+        let socket = connect_first_available(&[unreachable, reachable], TIMEOUT)
+            .expect("should fall back to the reachable address");
+
+        assert_eq!(socket.peer_addr().unwrap(), reachable);
+    }
+
+    #[test]
+    fn reports_the_last_error_when_every_address_fails() {
+        let unreachable: SocketAddr = "127.0.0.1:1".parse().unwrap();
+
+        connect_first_available(&[unreachable], TIMEOUT).expect_err("expected a connection error");
+    }
 }

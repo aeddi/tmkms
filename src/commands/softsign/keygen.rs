@@ -54,8 +54,10 @@ impl Runnable for KeygenCommand {
 /// Randomly generate a Base64-encoded secp256k1 key and store it at the given path
 fn generate_secp256k1_key(output_path: &Path) {
     let signing_key = ecdsa::SigningKey::random(&mut OsRng);
+    // `to_bytes` hands back a copy of the private scalar
+    let secret_bytes = Zeroizing::new(signing_key.to_bytes());
 
-    key_utils::write_base64_secret(output_path, &signing_key.to_bytes()).unwrap_or_else(|e| {
+    key_utils::write_base64_secret(output_path, &secret_bytes).unwrap_or_else(|e| {
         status_err!("{}", e);
         process::exit(1);
     });
@@ -74,7 +76,9 @@ fn generate_ed25519_key(output_path: &Path) {
     // in place
     let mut sk_bytes = Zeroizing::new([0u8; 32]);
     OsRng.fill_bytes(sk_bytes.as_mut());
-    let sk = ed25519_dalek::SigningKey::from(*sk_bytes);
+    // `from(&[u8; 32])` borrows, where `from(*sk_bytes)` would copy the seed onto
+    // the stack and leave that copy unwiped
+    let sk = ed25519_dalek::SigningKey::from_bytes(&sk_bytes);
 
     key_utils::write_base64_secret(output_path, sk.as_bytes()).unwrap_or_else(|e| {
         status_err!("{}", e);

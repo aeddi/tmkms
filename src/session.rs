@@ -86,7 +86,9 @@ impl Session {
                 // when set, but leave the socket unbounded when it is not: a validator
                 // can legitimately be idle between blocks, so a default timeout here
                 // would end healthy sessions.
-                if let Some(timeout) = config.timeout {
+                // A zero timeout is rejected by `set_read_timeout`, so treat it the
+                // way the config reads: no timeout at all
+                if let Some(timeout) = config.timeout.filter(|secs| *secs > 0) {
                     let timeout = Duration::from_secs(timeout.into());
                     socket.set_read_timeout(Some(timeout))?;
                     socket.set_write_timeout(Some(timeout))?;

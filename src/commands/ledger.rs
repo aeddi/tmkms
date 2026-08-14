@@ -83,8 +83,14 @@ impl InitCommand {
                 .map_err(|e| format_err!(InvalidMessageError, "invalid vote: {}", e))?,
         );
 
-        // Go through the same double signing checks as a signing request, so
-        // this cannot be used to sign at a height already signed for
+        // Go through the same double signing checks as a signing request, so this
+        // cannot be used to sign at a height already signed for.
+        //
+        // NOTE: this is currently unreachable. The `Vote` built above carries no
+        // timestamp and a proposal message code, both of which `Vote::try_from`
+        // rejects, so the command always fails before reaching this point. Left in
+        // place so the check is already correct once the message construction is
+        // fixed; see the backlog task for `tmkms ledger init`.
         chain
             .state
             .lock()
