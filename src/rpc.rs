@@ -59,7 +59,11 @@ impl Request {
             Some(proto::privval::message::Sum::PingRequest(_)) => {
                 return Ok(Request::PingRequest);
             }
-            _ => fail!(ErrorKind::ProtocolError, "invalid RPC message: {:?}", msg),
+            other => fail!(
+                ErrorKind::ProtocolError,
+                "invalid RPC message: {}",
+                describe_message(other.as_ref())
+            ),
         };
 
         ensure!(
@@ -152,5 +156,28 @@ impl From<ConsensusMsg> for Response {
                 })
             }
         }
+    }
+}
+
+/// Name a privval message type for logging.
+///
+/// Deliberately returns a fixed string per variant rather than formatting the
+/// message: the payload is supplied by the peer, so it must not be pasted into
+/// logs or error strings.
+fn describe_message(sum: Option<&proto::privval::message::Sum>) -> &'static str {
+    use proto::privval::message::Sum;
+
+    match sum {
+        None => "empty message",
+        Some(Sum::PubKeyRequest(_)) => "PubKeyRequest",
+        Some(Sum::PubKeyResponse(_)) => "PubKeyResponse",
+        Some(Sum::SignVoteRequest(_)) => "SignVoteRequest",
+        Some(Sum::SignedVoteResponse(_)) => "SignedVoteResponse",
+        Some(Sum::SignProposalRequest(_)) => "SignProposalRequest",
+        Some(Sum::SignedProposalResponse(_)) => "SignedProposalResponse",
+        Some(Sum::PingRequest(_)) => "PingRequest",
+        Some(Sum::PingResponse(_)) => "PingResponse",
+        Some(Sum::SignRawBytesRequest(_)) => "SignRawBytesRequest",
+        Some(Sum::SignedRawBytesResponse(_)) => "SignedRawBytesResponse",
     }
 }

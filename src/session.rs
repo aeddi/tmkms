@@ -13,7 +13,10 @@ use crate::{
 use cometbft::{CometbftKey, consensus};
 use cometbft_config::net;
 use prost::Message;
-use std::{os::unix::net::UnixStream, time::Instant};
+use std::{
+    os::unix::net::UnixStream,
+    time::{Duration, Instant},
+};
 
 /// Encrypted session with a validator node
 pub struct Session {
@@ -72,16 +75,23 @@ impl Session {
                 Box::new(conn)
             }
             net::Address::Unix { path } => {
-                if let Some(timeout) = config.timeout {
-                    warn!("timeouts not supported with Unix sockets: {}", timeout);
-                }
-
                 debug!(
                     "{}: Connecting to socket at {}...",
                     &config.chain_id, &config.addr
                 );
 
                 let socket = UnixStream::connect(path)?;
+
+                // Unix sockets previously ignored `timeout` with a warning. Honour it
+                // when set, but leave the socket unbounded when it is not: a validator
+                // can legitimately be idle between blocks, so a default timeout here
+                // would end healthy sessions.
+                if let Some(timeout) = config.timeout {
+                    let timeout = Duration::from_secs(timeout.into());
+                    socket.set_read_timeout(Some(timeout))?;
+                    socket.set_write_timeout(Some(timeout))?;
+                }
+
                 let conn = UnixConnection::new(socket);
 
                 info!(

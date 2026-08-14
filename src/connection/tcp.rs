@@ -1,6 +1,10 @@
 //! TCP socket connection to a validator
 
-use std::{net::TcpStream, path::PathBuf, time::Duration};
+use std::{
+    net::{TcpStream, ToSocketAddrs},
+    path::PathBuf,
+    time::Duration,
+};
 
 use cometbft::node;
 use cometbft_p2p::{IdentitySecret, PublicKey, SecretConnection};
@@ -35,8 +39,24 @@ pub fn open_secret_connection(
     let identity_key = IdentitySecret::from(key_utils::load_identity_key(identity_key_path)?);
     info!("KMS node ID: {}", PublicKey::from(&identity_key));
 
-    let socket = TcpStream::connect(format!("{host}:{port}"))?;
     let timeout = Duration::from_secs(timeout.unwrap_or(DEFAULT_TIMEOUT).into());
+
+    // `TcpStream::connect` has no timeout of its own, so an unreachable validator
+    // would otherwise hang here for the OS default (minutes). Note that DNS
+    // resolution below is still unbounded: std offers no way to time it out.
+    let addr = format!("{host}:{port}")
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| {
+            format_err!(
+                ConfigError,
+                "couldn't resolve validator address: {}:{}",
+                host,
+                port
+            )
+        })?;
+
+    let socket = TcpStream::connect_timeout(&addr, timeout)?;
     socket.set_read_timeout(Some(timeout))?;
     socket.set_write_timeout(Some(timeout))?;
 
