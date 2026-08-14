@@ -17,12 +17,14 @@
 # - state_hook (optional): user-specified command to run on startup to obtain the current height
 #   of this chain. The command should output JSON which looks like the following:
 #   {"latest_block_height": "347290"}
+#   `fail_closed` is required: true prevents the KMS from starting if the command fails,
+#   false logs the error and starts with the height from the state file.
 [[chain]]
 id = "cosmoshub-3"
 key_format = { type = "bech32", account_key_prefix = "cosmospub", consensus_key_prefix = "cosmosvalconspub" }
 sign_extensions = false # Should vote extensions for this chain be signed? (default: false)
 # state_file = "/path/to/cosmoshub_priv_validator_state.json"
-# state_hook = { cmd = ["/path/to/block/height_script", "--example-arg", "cosmoshub"] }
+# state_hook = { cmd = ["/path/to/block/height_script", "--example-arg", "cosmoshub"], fail_closed = false }
 
 [[chain]]
 id = "irishub"
