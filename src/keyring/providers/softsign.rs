@@ -97,7 +97,13 @@ fn load_ed25519_key(config: &SoftsignConfig) -> Result<ed25519::SigningKey, Erro
             if let PrivateKey::Ed25519(pk) = private_key {
                 Ok(pk.into())
             } else {
-                unreachable!("unsupported priv_validator.json algorithm");
+                // `PrivValidatorKey` also accepts secp256k1, so this is reachable
+                // with a legitimate key file
+                fail!(
+                    ConfigError,
+                    "unsupported key type in `{}`: an Ed25519 consensus key is required",
+                    config.path.as_ref().display()
+                );
             }
         }
     }
@@ -124,4 +130,55 @@ fn load_secp256k1_key(config: &SoftsignConfig) -> Result<ecdsa::SigningKey, Erro
     })?;
 
     Ok(secret_key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::load_ed25519_key;
+    use crate::config::provider::softsign::SoftsignConfig;
+    use k256::ecdsa;
+    use std::io::Write;
+    use subtle_encoding::base64;
+
+    /// Write a valid secp256k1 `priv_validator_key.json` and return its path
+    fn secp256k1_priv_validator_key(dir: &std::path::Path) -> std::path::PathBuf {
+        let secret_bytes = [1u8; 32];
+        let signing_key = ecdsa::SigningKey::from_slice(&secret_bytes).unwrap();
+        let encode = |bytes: &[u8]| String::from_utf8(base64::encode(bytes)).unwrap();
+
+        let json = format!(
+            r#"{{
+              "address": "0000000000000000000000000000000000000000",
+              "pub_key": {{
+                "type": "tendermint/PubKeySecp256k1",
+                "value": "{}"
+              }},
+              "priv_key": {{
+                "type": "tendermint/PrivKeySecp256k1",
+                "value": "{}"
+              }}
+            }}"#,
+            encode(&signing_key.verifying_key().to_sec1_bytes()),
+            encode(&secret_bytes)
+        );
+
+        let path = dir.join("priv_validator_key.json");
+        let mut file = std::fs::File::create(&path).unwrap();
+        file.write_all(json.as_bytes()).unwrap();
+        path
+    }
+
+    #[test]
+    fn secp256k1_priv_validator_key_is_an_error_not_a_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = secp256k1_priv_validator_key(dir.path());
+
+        let config: SoftsignConfig = serde_json::from_str(&format!(
+            r#"{{"chain_ids":["test-chain"],"key_type":"consensus","key_format":"json","path":"{}"}}"#,
+            path.display()
+        ))
+        .unwrap();
+
+        load_ed25519_key(&config).expect_err("a secp256k1 consensus key should be rejected");
+    }
 }
