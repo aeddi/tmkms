@@ -1,0 +1,39 @@
+# cargo-deny configuration: https://embarkstudios.github.io/cargo-deny/
+#
+# Advisories are deliberately NOT configured here. `rustsec/audit-check` owns that
+# check (see .github/workflows/security_audit.yml) and reads .cargo/audit.toml, so
+# duplicating the ignore list would let the two disagree. CI runs
+# `cargo deny check licenses bans sources`.
+
+[graph]
+all-features = true
+
+[licenses]
+# Every license currently present in the dependency graph resolves to one of these.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+    # Weak, file-level copyleft. Reached only under the `fortanixdsm` feature, via
+    # Fortanix's own `sdkms` and `simple-hyper-client` crates, which are used
+    # unmodified.
+    "MPL-2.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Duplicate versions are common in a tree this size and are not a correctness
+# problem on their own, so surface them without failing the build.
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
