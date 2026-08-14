@@ -59,7 +59,8 @@ impl Session {
                 );
 
                 if peer_id.is_none() {
-                    // TODO(tarcieri): make peer verification mandatory
+                    // Reachable only with `allow_unverified_peer = true`, which
+                    // `ValidatorConfig::validate_peer_verification` enforces at startup
                     warn!(
                         "[{}@{}]: unverified validator peer ID! ({})",
                         &config.chain_id,

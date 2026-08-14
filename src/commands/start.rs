@@ -40,6 +40,15 @@ impl StartCommand {
             process::exit(1);
         });
 
+        // Refuse to start rather than retrying a config that can never
+        // authenticate its validator
+        for validator in &config.validator {
+            validator.validate_peer_verification().unwrap_or_else(|e| {
+                status_err!("{}", e);
+                process::exit(1);
+            });
+        }
+
         // Spawn the validator client threads
         config
             .validator
