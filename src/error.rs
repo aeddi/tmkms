@@ -233,6 +233,10 @@ impl From<chain::state::StateError> for Error {
             | StateErrorKind::RoundRegression
             | StateErrorKind::StepRegression => ErrorKind::DoubleSign,
             StateErrorKind::SyncError => ErrorKind::StateSyncError,
+            // A refusal to trust the state hook's height: neither an equivocation
+            // attempt nor a disk failure. Matches how `chain::from_config` labels
+            // it, so `fail_closed` reporting stays consistent.
+            StateErrorKind::HookHeightOutOfRange => ErrorKind::HookError,
         };
 
         kind.context(other).into()
@@ -256,6 +260,13 @@ mod tests {
         let error = Error::from(StateError::from(StateErrorKind::DoubleSign));
 
         assert_eq!(*error.kind(), ErrorKind::DoubleSign);
+    }
+
+    #[test]
+    fn hook_height_out_of_range_is_not_reported_as_a_double_sign() {
+        let error = Error::from(StateError::from(StateErrorKind::HookHeightOutOfRange));
+
+        assert_eq!(*error.kind(), ErrorKind::HookError);
     }
 
     #[test]
