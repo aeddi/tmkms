@@ -17,7 +17,10 @@
 use super::client::TendermintValidatorApp;
 use crate::keyring::ed25519::{Signature, VerifyingKey};
 use signature::{Error, Signer};
-use std::sync::{Arc, Mutex};
+use std::{
+    io,
+    sync::{Arc, Mutex},
+};
 
 /// ed25519 signature provider for the Ledger Tendermint Validator app
 pub(super) struct Ed25519LedgerTmAppSigner {
@@ -33,19 +36,33 @@ impl Ed25519LedgerTmAppSigner {
     }
 }
 
-impl From<&Ed25519LedgerTmAppSigner> for VerifyingKey {
-    /// Returns the public key that corresponds to the Tendermint Validator app connected to this signer
-    fn from(signer: &Ed25519LedgerTmAppSigner) -> VerifyingKey {
-        let app = signer.app.lock().unwrap();
-        VerifyingKey::try_from(app.public_key().unwrap().as_ref())
-            .expect("invalid Ed25519 public key")
+impl TryFrom<&Ed25519LedgerTmAppSigner> for VerifyingKey {
+    type Error = Error;
+
+    /// Returns the public key that corresponds to the Tendermint Validator app connected to this signer.
+    ///
+    /// Fallible because talking to the device can fail: panicking here would do so
+    /// while holding the device lock, poisoning it for every later request.
+    fn try_from(signer: &Ed25519LedgerTmAppSigner) -> Result<VerifyingKey, Error> {
+        let app = signer
+            .app
+            .lock()
+            .map_err(|_| Error::from_source(io::Error::other("ledger device lock poisoned")))?;
+
+        let public_key = app.public_key().map_err(Error::from_source)?;
+
+        VerifyingKey::try_from(public_key.as_ref())
+            .map_err(|_| Error::from_source(io::Error::other("invalid Ed25519 public key")))
     }
 }
 
 impl Signer<Signature> for Ed25519LedgerTmAppSigner {
     /// c: Compute a compact, fixed-sized signature of the given amino/json vote
     fn try_sign(&self, msg: &[u8]) -> Result<Signature, Error> {
-        let app = self.app.lock().unwrap();
+        let app = self
+            .app
+            .lock()
+            .map_err(|_| Error::from_source(io::Error::other("ledger device lock poisoned")))?;
         let sig = app.sign(msg).map_err(Error::from_source)?;
         Ok(Signature::from(sig))
     }
@@ -60,7 +77,7 @@ mod tests {
     #[ignore]
     fn public_key() {
         let signer = Ed25519LedgerTmAppSigner::connect().unwrap();
-        let pk = VerifyingKey::from(&signer);
+        let pk = VerifyingKey::try_from(&signer).unwrap();
         println!("PK {pk:0X?}");
     }
 
@@ -127,7 +144,7 @@ mod tests {
         let signer = Ed25519LedgerTmAppSigner::connect().unwrap();
 
         // Get public key to initialize
-        let pk = VerifyingKey::from(&signer);
+        let pk = VerifyingKey::try_from(&signer).unwrap();
         println!("PK {pk:0X?}");
 
         for index in 50u8..254u8 {

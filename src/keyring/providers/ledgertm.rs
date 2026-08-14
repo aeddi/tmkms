@@ -36,8 +36,11 @@ pub fn init(
 
     let provider = Ed25519LedgerTmAppSigner::connect().map_err(|_| Error::from(SigningError))?;
 
-    let public_key = PublicKey::from_raw_ed25519(ed25519::VerifyingKey::from(&provider).as_bytes())
-        .expect("invalid Ed25519 public key");
+    let verifying_key = ed25519::VerifyingKey::try_from(&provider)
+        .map_err(|e| format_err!(InvalidKey, "couldn't read Ledger public key: {}", e))?;
+
+    let public_key = PublicKey::from_raw_ed25519(verifying_key.as_bytes())
+        .ok_or_else(|| format_err!(InvalidKey, "invalid Ed25519 public key from Ledger"))?;
 
     let signer = Signer::new(
         SigningProvider::LedgerTm,
