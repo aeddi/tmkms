@@ -40,10 +40,11 @@ pub struct ImportCommand {
 
 impl Runnable for ImportCommand {
     fn run(&self) {
-        let contents = fs::read_to_string(&self.path).unwrap_or_else(|e| {
+        // The file holds key material, so wipe the buffer when this scope ends
+        let contents = Zeroizing::new(fs::read_to_string(&self.path).unwrap_or_else(|e| {
             status_err!("couldn't import file {}: {}", self.path.display(), e);
             process::exit(1);
-        });
+        }));
 
         match self.key_type.as_deref() {
             Some("wrap") => self.import_wrapped(&contents),
